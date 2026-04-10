@@ -11,34 +11,49 @@ const app = express();
 
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
-const defaultAllowedOrigins = new Set([
+
+// ✅ FIXED: remove trailing slash automatically
+const CLIENT_ORIGIN = (process.env.CLIENT_ORIGIN || "https://certificate-verification-system-iota.vercel.app")
+  .trim()
+  .replace(/\/$/, "");
+
+// ✅ Allowed origins
+const allowedOrigins = new Set([
   "http://localhost:5173",
   "http://127.0.0.1:5173",
-   "http://localhost:5174",       
-  "http://127.0.0.1:5174" 
+  "http://localhost:5174",
+  "http://127.0.0.1:5174",
+  ...CLIENT_ORIGIN.split(",").map(o => o.trim().replace(/\/$/, ""))
 ]);
-const envAllowedOrigins = new Set(
-  String(CLIENT_ORIGIN)
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-);
-const allowedOrigins = new Set([...defaultAllowedOrigins, ...envAllowedOrigins]);
 
-app.use(
-  cors({
-    origin(origin, cb) {
-      // allow same-origin / server-to-server (no Origin header)
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.has(origin)) return cb(null, true);
-      return cb(new Error(`CORS blocked for origin: ${origin}`));
-    },
-    credentials: true
-  })
-);
+// ✅ CORS OPTIONS
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+
+    const cleanOrigin = origin.replace(/\/$/, "");
+
+    if (allowedOrigins.has(cleanOrigin)) {
+      return callback(null, true);
+    }
+
+    console.log("❌ CORS blocked:", origin);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+};
+
+// ✅ APPLY FIRST
+app.use(cors(corsOptions));
+
+// ✅ VERY IMPORTANT (preflight fix)
+app.options("*", cors(corsOptions));
+
 app.set("trust proxy", 1);
 app.use(helmet());
+
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -47,17 +62,14 @@ app.use(
     legacyHeaders: false
   })
 );
+
 app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
 
 // ✅ Routes
-const uploadRoutes = require("./routes/uploadRoutes");
-app.use("/api/upload", uploadRoutes);
+app.use("/api/upload", require("./routes/uploadRoutes"));
+app.use("/api/certificates", require("./routes/certificateRoutes"));
 
-const certificateRoutes = require("./routes/certificateRoutes");
-app.use("/api/certificates", certificateRoutes);
-
-const authRoutes = require("./routes/authRoutes");
 app.use(
   "/api/auth",
   rateLimit({
@@ -66,45 +78,45 @@ app.use(
     standardHeaders: "draft-8",
     legacyHeaders: false
   }),
-  authRoutes
+  require("./routes/authRoutes")
 );
 
-const usersRoutes = require("./routes/usersRoutes");
-app.use("/api/users", usersRoutes);
+app.use("/api/users", require("./routes/usersRoutes"));
+app.use("/api/imports", require("./routes/importsRoutes"));
 
-const importsRoutes = require("./routes/importsRoutes");
-app.use("/api/imports", importsRoutes);
-
-// Test route
+// ✅ Test route
 app.get("/", (req, res) => {
   res.send("API Running...");
 });
 
+// ✅ Start server
 async function start() {
   if (!MONGO_URI) {
-    throw new Error("Missing MONGO_URI (or MONGODB_URI) in environment.");
+    throw new Error("Missing MONGO_URI (or MONGODB_URI)");
   }
 
   await mongoose.connect(MONGO_URI);
-  console.log("Connected to MongoDB");
+  console.log("✅ MongoDB Connected");
 
   const { ensureSuperAdmin } = require("./bootstrap/ensureSuperAdmin");
-  const result = await ensureSuperAdmin();
-  if (result?.reason) {
-    console.log(`[bootstrap] ${result.reason}`);
-  }
+  await ensureSuperAdmin();
 
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 }
 
 start().catch((err) => {
-  console.error("Failed to start server:", err);
-  process.exitCode = 1;
+  console.error("❌ Startup error:", err);
+  process.exit(1);
 });
 
-// Centralized error handler (keep last)
-// eslint-disable-next-line no-unused-vars
+// ✅ FINAL ERROR HANDLER (CORS SAFE)
 app.use((err, req, res, next) => {
-  console.error("Unhandled error:", err);
-  res.status(500).json({ message: "Internal server error" });
+  console.error("❌ Error:", err.message);
+
+  res.header("Access-Control-Allow-Origin", CLIENT_ORIGIN);
+  res.header("Access-Control-Allow-Credentials", "true");
+
+  res.status(500).json({
+    message: err.message || "Internal Server Error"
+  });
 });
