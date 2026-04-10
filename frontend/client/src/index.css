@@ -1,0 +1,13 @@
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(1200px 500px at 10% 0%, rgba(37, 99, 235, 0.12), transparent 55%),
+    radial-gradient(900px 500px at 90% 100%, rgba(16, 185, 129, 0.12), transparent 55%),
+    #f8fafc;
+}
+
